@@ -27,3 +27,10 @@ frontend/data/
 # --- OS / editor ---
 .DS_Store
 *.log
+
+# --- Release artifacts ---
+backend/build/
+backend/dist/
+frontend/release/
+*.dmg
+*.AppImage

@@ -1,9 +1,28 @@
 import type { ChatResponse, EnhanceResponse, RecommendResponse, UserProfile } from "../types";
 
-const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+/**
+ * Packaged builds spawn the backend on the first free port from 8000, so the
+ * URL can't be hardcoded — ask the main process for the one it actually used.
+ */
+let baseUrlPromise: Promise<string> | null = null;
+
+function resolveBaseUrl(): Promise<string> {
+  if (import.meta.env.VITE_API_URL) return Promise.resolve(import.meta.env.VITE_API_URL);
+
+  baseUrlPromise ??= (async () => {
+    try {
+      const url = await window.electronAPI?.invoke("get-api-url");
+      return url || "http://127.0.0.1:8000";
+    } catch {
+      return "http://127.0.0.1:8000";
+    }
+  })();
+
+  return baseUrlPromise;
+}
 
 async function post<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const res = await fetch(`${await resolveBaseUrl()}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -20,7 +39,7 @@ export const api = {
     post<RecommendResponse>("/recommend", profile),
 
   async recommendRandom(): Promise<RecommendResponse> {
-    const res = await fetch(`${BASE_URL}/recommend`);
+    const res = await fetch(`${await resolveBaseUrl()}/recommend`);
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
   },

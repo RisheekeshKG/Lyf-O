@@ -1,0 +1,65 @@
+name: Release
+
+# PyInstaller cannot cross-compile, so each installer is built on its own OS.
+# Tag a release to trigger:  git tag v1.0.0 && git push origin v1.0.0
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+            artifact: "*.dmg"
+          - os: windows-latest
+            platform: win
+            artifact: "*.exe"
+          - os: ubuntu-latest
+            platform: linux
+            artifact: "*.AppImage"
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build backend binary
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+          python -m PyInstaller lyfo-backend.spec --noconfirm
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build renderer
+        working-directory: frontend
+        run: npm run build
+
+      - name: Package installer
+        working-directory: frontend
+        run: npx electron-builder --${{ matrix.platform }} --publish never
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lyfo-${{ matrix.platform }}
+          path: frontend/release/*/${{ matrix.artifact }}
+          if-no-files-found: error

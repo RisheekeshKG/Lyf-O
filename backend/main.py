@@ -15,7 +15,7 @@ from kmodes.kprototypes import KPrototypes
 import agent
 import schemas
 
-import os, json, uvicorn, re, traceback
+import os, sys, json, uvicorn, re, traceback
 import pandas as pd
 import joblib
 import numpy as np
@@ -26,12 +26,18 @@ import datetime
 # ==========================================================
 load_dotenv()
 
-BASE_DIR = Path(__file__).resolve().parent
+# When frozen by PyInstaller, bundled data lives in sys._MEIPASS, not next to
+# the script. Everything else still resolves relative to the source tree.
+IS_FROZEN = getattr(sys, "frozen", False)
+BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 
 # The user's pages, written by the Electron app — not part of this repo's assets.
 # Serverless hosts (Vercel, Lambda) mount a read-only filesystem with only /tmp
 # writable, so this must never hard-fail at import or the whole app 500s.
-DATA_DIR = Path(os.getenv("LYFO_DATA_DIR") or (BASE_DIR.parent / "frontend" / "data"))
+DATA_DIR = Path(
+    os.getenv("LYFO_DATA_DIR")
+    or (Path.home() / ".lyfo" / "data" if IS_FROZEN else BASE_DIR.parent / "frontend" / "data")
+)
 
 try:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -55,10 +61,14 @@ page_store = agent.PageStore(DATA_DIR)
 # ==========================================================
 # APP
 # ==========================================================
-app = FastAPI(title="MCP-like FastAPI Agent")
+app = FastAPI(title="lyf-O backend")
+
+# A packaged Electron renderer loads from file://, which sends "Origin: null" —
+# the dev-only origin list blocked every request in production builds. The
+# server binds to loopback, so any local origin is acceptable here.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origin_regex=r"^(http://localhost:\d+|http://127\.0\.0\.1:\d+|file://.*|null)$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -67,26 +77,35 @@ app.add_middleware(
 # ==========================================================
 # LLMs
 # ==========================================================
-# Main chat LLM (conversational)
-llm = ChatGoogleGenerativeAI(
-    model=os.getenv("MODEL_NAME", "gemini-1.5-pro"),
-    google_api_key=os.getenv("GOOGLE_API_KEY"),
-    temperature=0.6,
-)
+class LLMUnavailable(RuntimeError):
+    """No usable API key — the caller should degrade, not crash."""
 
-# Deterministic tool LLM for tool selection
-llm_tool = ChatGoogleGenerativeAI(
-    model=os.getenv("MODEL_NAME", "gemini-1.5-pro"),
-    google_api_key=os.getenv("GOOGLE_API_KEY"),
-    temperature=0.0,
-)
 
-# Low-temp content generator LLM for filling rows/todos
-llm_content = ChatGoogleGenerativeAI(
-    model=os.getenv("MODEL_NAME", "gemini-1.5-pro"),
-    google_api_key=os.getenv("GOOGLE_API_KEY"),
-    temperature=0.15,
-)
+# Built on first use, never at import. Constructing these with no key makes the
+# Google client fall back to Application Default Credentials and raise, which
+# previously killed the whole server — including /recommend, which needs no LLM.
+_llm_cache: Dict[float, Any] = {}
+
+
+def get_llm(temperature: float = 0.6):
+    key = os.getenv("GOOGLE_API_KEY")
+    if not key:
+        raise LLMUnavailable(
+            "No GOOGLE_API_KEY configured. Set it in backend/.env (development) "
+            "or in the app's environment, then restart."
+        )
+
+    if temperature not in _llm_cache:
+        _llm_cache[temperature] = ChatGoogleGenerativeAI(
+            model=os.getenv("MODEL_NAME", "gemini-1.5-pro"),
+            google_api_key=key,
+            temperature=temperature,
+        )
+    return _llm_cache[temperature]
+
+
+def llm_available() -> bool:
+    return bool(os.getenv("GOOGLE_API_KEY"))
 
 
 # ==========================================================
@@ -162,6 +181,9 @@ async def enhance_template(payload: dict):
     if not template:
         raise HTTPException(status_code=400, detail="Missing template.")
 
+    if not llm_available():
+        raise HTTPException(status_code=503, detail="No GOOGLE_API_KEY configured.")
+
     # Use llm_content to rewrite template based on the user's profile
     enhance_prompt = PromptTemplate(
         input_variables=["template", "profile"],
@@ -179,7 +201,7 @@ async def enhance_template(payload: dict):
         )
     )
 
-    chain = LLMChain(llm=llm_content, prompt=enhance_prompt)
+    chain = LLMChain(llm=get_llm(0.15), prompt=enhance_prompt)
 
     raw = chain.run({
         "template": json.dumps(template),
@@ -220,7 +242,7 @@ def session_chain(session_id: str) -> ConversationChain:
         if len(_SESSIONS) >= _MAX_SESSIONS:
             _SESSIONS.pop(next(iter(_SESSIONS)))
         _SESSIONS[session_id] = ConversationChain(
-            llm=llm, memory=ConversationBufferMemory(return_messages=True)
+            llm=get_llm(0.6), memory=ConversationBufferMemory(return_messages=True)
         )
     return _SESSIONS[session_id]
 
@@ -231,13 +253,20 @@ async def chat(m: Msg):
     One turn: decide whether the message needs a workspace action, run it if so,
     otherwise converse. Tool failures are reported, never silently swallowed.
     """
+    if not llm_available():
+        return {
+            "mode": "error",
+            "generated_text": "No API key is configured, so the assistant is offline. "
+            "Add GOOGLE_API_KEY to backend/.env and restart.",
+        }
+
     try:
-        selection = agent.select_tool(llm_tool, m.content, page_store.list())
+        selection = agent.select_tool(get_llm(0.0), m.content, page_store.list())
 
         if selection:
             tool_name, args = selection
             args.setdefault("request", m.content)
-            result = agent.run_tool(tool_name, page_store, llm_content, args)
+            result = agent.run_tool(tool_name, page_store, get_llm(0.15), args)
 
             return {
                 "mode": "tool",
@@ -360,4 +389,13 @@ async def recommend_user(p: UserProfile):
 # RUN
 # ==========================================================
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    # Bind to loopback only — this server is for the desktop app on this machine.
+    host = os.getenv("LYFO_HOST", "127.0.0.1")
+    port = int(os.getenv("LYFO_PORT", "8000"))
+
+    # Frozen builds must pass the app object (no "main:app" import string) and
+    # must not enable reload, which respawns via sys.argv and breaks.
+    if IS_FROZEN:
+        uvicorn.run(app, host=host, port=port, log_level="info")
+    else:
+        uvicorn.run("main:app", host=host, port=port, reload=True)

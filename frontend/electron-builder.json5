@@ -1,43 +1,59 @@
 // @see - https://www.electron.build/configuration/configuration
 {
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
-  "appId": "YourAppID",
+  "appId": "com.risheekesh.lyfo",
+  "productName": "Lyf-O",
   "asar": true,
-  "productName": "YourAppName",
   "directories": {
-    "output": "release/${version}"
+    "output": "release/${version}",
+    "buildResources": "build"
   },
   "files": [
     "dist",
     "dist-electron"
   ],
+
+  // The PyInstaller bundle is copied in verbatim; main.ts spawns it from
+  // process.resourcesPath/backend. Build it first:
+  //   cd backend && ./venv/bin/python -m PyInstaller lyfo-backend.spec --noconfirm
+  // PyInstaller cannot cross-compile — build on each target OS.
+  "extraResources": [
+    {
+      "from": "../backend/dist/lyfo-backend",
+      "to": "backend",
+      "filter": ["**/*"]
+    }
+  ],
+
   "mac": {
     "target": [
-      "dmg"
+      { "target": "dmg", "arch": ["arm64", "x64"] }
     ],
-    "artifactName": "${productName}-Mac-${version}-Installer.${ext}"
+    "category": "public.app-category.productivity",
+    "artifactName": "${productName}-${version}-mac-${arch}.${ext}",
+    // The bundled Python binary is unsigned; without this the hardened runtime
+    // refuses to execute it.
+    "hardenedRuntime": false,
+    "gatekeeperAssess": false
   },
+
   "win": {
     "target": [
-      {
-        "target": "nsis",
-        "arch": [
-          "x64"
-        ]
-      }
+      { "target": "nsis", "arch": ["x64"] }
     ],
-    "artifactName": "${productName}-Windows-${version}-Setup.${ext}"
+    "artifactName": "${productName}-${version}-win-${arch}-Setup.${ext}"
   },
+
   "nsis": {
     "oneClick": false,
     "perMachine": false,
     "allowToChangeInstallationDirectory": true,
     "deleteAppDataOnUninstall": false
   },
+
   "linux": {
-    "target": [
-      "AppImage"
-    ],
-    "artifactName": "${productName}-Linux-${version}.${ext}"
+    "target": ["AppImage"],
+    "category": "Office",
+    "artifactName": "${productName}-${version}-linux-${arch}.${ext}"
   }
 }

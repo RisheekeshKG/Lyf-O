@@ -6,6 +6,9 @@ console.log("🔌 [Preload] Script loaded. Injecting APIs...");
 
 // ✅ Allowed IPC channels (keep this in sync with main.ts)
 const validInvokes = [
+  // App
+  "get-api-url",
+
   // File system
   "readDir",
   "statDir",

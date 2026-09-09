@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import fs from "fs/promises";
 import fsSync from "fs";
+import { spawn, type ChildProcess } from "node:child_process";
+import net from "node:net";
 import dotenv from "dotenv";
 import { google } from "googleapis";
 import keytar from "keytar";
@@ -35,6 +37,83 @@ const IS_DEV = Boolean(VITE_DEV_SERVER_URL);
 const DEV_DATA_DIR = path.resolve(process.env.APP_ROOT!, "../frontend/data");
 const PROD_DATA_DIR = path.join(app.getPath("userData"), "data");
 const DATA_DIR = IS_DEV ? DEV_DATA_DIR : PROD_DATA_DIR;
+
+// ===================================================
+// 🐍 PYTHON BACKEND
+// ===================================================
+// Packaged builds ship a PyInstaller bundle and own its lifecycle. In dev the
+// developer runs the backend themselves, so we attach to whatever is on 8000.
+
+let backend: ChildProcess | null = null;
+let apiPort = 8000;
+
+function isPortFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = net.createServer();
+    probe.once("error", () => resolve(false));
+    probe.once("listening", () => probe.close(() => resolve(true)));
+    probe.listen(port, "127.0.0.1");
+  });
+}
+
+async function findPort(start: number, attempts = 20): Promise<number> {
+  for (let port = start; port < start + attempts; port++) {
+    if (await isPortFree(port)) return port;
+  }
+  return start;
+}
+
+function backendBinary(): string | null {
+  // electron-builder copies the PyInstaller folder into the app's resources.
+  const candidate = path.join(
+    process.resourcesPath ?? "",
+    "backend",
+    process.platform === "win32" ? "lyfo-backend.exe" : "lyfo-backend",
+  );
+  return fsSync.existsSync(candidate) ? candidate : null;
+}
+
+async function startBackend() {
+  if (IS_DEV) {
+    console.log("dev mode: expecting a backend on port 8000");
+    return;
+  }
+
+  const binary = backendBinary();
+  if (!binary) {
+    console.warn("no bundled backend found — AI and recommendations will be unavailable");
+    return;
+  }
+
+  apiPort = await findPort(8000);
+
+  backend = spawn(binary, [], {
+    env: {
+      ...process.env,
+      LYFO_PORT: String(apiPort),
+      LYFO_HOST: "127.0.0.1",
+      // Backend and app must agree on where pages live.
+      LYFO_DATA_DIR: DATA_DIR,
+      PYTHONUNBUFFERED: "1",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  backend.stdout?.on("data", (chunk) => console.log(`[backend] ${chunk}`.trimEnd()));
+  backend.stderr?.on("data", (chunk) => console.error(`[backend] ${chunk}`.trimEnd()));
+  backend.on("exit", (code) => console.log(`[backend] exited with ${code}`));
+
+  console.log(`[backend] started on 127.0.0.1:${apiPort} (${binary})`);
+}
+
+function stopBackend() {
+  if (!backend) return;
+  // Without this the Python process outlives the window and holds the port.
+  backend.kill();
+  backend = null;
+}
+
+ipcMain.handle("get-api-url", () => `http://127.0.0.1:${apiPort}`);
 
 async function ensureDataDir() {
   try {
@@ -95,12 +174,15 @@ function createWindow() {
 
 app.whenReady().then(async () => {
   await ensureDataDir();
+  await startBackend();
   createWindow();
 });
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
+app.on("before-quit", stopBackend);
+process.on("exit", stopBackend);
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
