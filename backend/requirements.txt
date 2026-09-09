@@ -1,7 +1,20 @@
+# Install:  python3 -m venv venv && ./venv/bin/pip install -r requirements.txt
+
+# --- Web server ---
 fastapi==0.121.0
-google-generativeai==0.8.5
-langchain==0.3.8
-langchain-google-genai==2.0.6
+uvicorn==0.38.0
 pydantic==2.12.4
 python-dotenv==1.2.1
-uvicorn==0.38.0
+
+# --- LLM (AI Assistant, template enhancement) ---
+langchain==0.3.8
+langchain-google-genai==2.0.6
+google-generativeai==0.8.5
+
+# --- Recommendation model (/recommend) ---
+# kmodes provides KPrototypes and requires scikit-learn at runtime.
+kmodes==0.12.2
+scikit-learn==1.9.0
+joblib==1.6.0
+pandas==3.0.5
+numpy==1.26.4

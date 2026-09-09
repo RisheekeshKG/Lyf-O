@@ -1,0 +1,16 @@
+# Virtual environments — recreate with requirements.txt, never commit
+venv/
+venvv/
+.venv/
+.run_venv/
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Secrets — holds GOOGLE_API_KEY
+.env
+.env.*
+!.env.example

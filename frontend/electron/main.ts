@@ -1,5 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from "electron";
-import { createRequire } from "node:module";
+import { app, BrowserWindow, ipcMain } from "electron";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import fs from "fs/promises";
@@ -17,7 +16,6 @@ import serverDestroy from "server-destroy"; // ✅ fixed import typing
 
 dotenv.config({ path: path.join(process.cwd(), ".env") });
 
-const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 process.env.APP_ROOT = path.join(__dirname, "..");
@@ -60,16 +58,30 @@ function resolvePreloadPath() {
 
 function createWindow() {
   const preloadPath = resolvePreloadPath();
+  const isMac = process.platform === "darwin";
+
   win = new BrowserWindow({
     icon: path.join(process.env.VITE_PUBLIC!, "electron-vite.svg"),
     width: 1100,
     height: 750,
+    minWidth: 900,
+    minHeight: 600,
+    // Immersive chrome: no OS title bar or app name, native traffic lights
+    // overlaid on our own header (the titlebar-height token is 40px).
+    ...(isMac
+      ? { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 16, y: 14 } }
+      : {}),
+    backgroundColor: "#121315",
+    show: false,
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
     },
   });
+
+  // Avoid the white flash before the renderer paints.
+  win.once("ready-to-show", () => win?.show());
 
   win.webContents.on("did-finish-load", () => {
     win?.webContents.send("fromMain", `👋 Hello from main (${IS_DEV ? "DEV" : "PROD"})`);
@@ -103,6 +115,23 @@ ipcMain.handle("readDir", async () => {
     return files.filter((f) => f.isFile()).map((f) => f.name);
   } catch (error) {
     console.error("❌ readDir error:", error);
+    return [];
+  }
+});
+
+ipcMain.handle("statDir", async () => {
+  try {
+    const files = await fs.readdir(DATA_DIR, { withFileTypes: true });
+    return Promise.all(
+      files
+        .filter((f) => f.isFile())
+        .map(async (f) => {
+          const stat = await fs.stat(path.join(DATA_DIR, f.name));
+          return { name: f.name, modified: stat.mtimeMs, size: stat.size };
+        }),
+    );
+  } catch (error) {
+    console.error("❌ statDir error:", error);
     return [];
   }
 });

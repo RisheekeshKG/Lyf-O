@@ -1,0 +1,29 @@
+# --- Secrets ---
+.env
+.env.*
+!.env.example
+
+# --- Python ---
+venv/
+venvv/
+.venv/
+.run_venv/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# --- Node ---
+node_modules/
+
+# --- Build output ---
+dist/
+dist-electron/
+release/
+build/
+
+# --- Runtime workspace data (created by the app, not source) ---
+frontend/data/
+
+# --- OS / editor ---
+.DS_Store
+*.log

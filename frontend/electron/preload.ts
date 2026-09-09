@@ -8,6 +8,7 @@ console.log("🔌 [Preload] Script loaded. Injecting APIs...");
 const validInvokes = [
   // File system
   "readDir",
+  "statDir",
   "readFile",
   "writeFile",
   "deleteFile",

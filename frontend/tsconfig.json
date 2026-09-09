@@ -30,18 +30,12 @@
       "@/*": ["src/*"]
     },
 
-    /* ✅ Recognize custom type definitions (like server-destroy.d.ts) */
-    "typeRoots": ["./node_modules/@types", "./src/types"]
+    "typeRoots": ["./node_modules/@types"]
   },
 
-  /* ✅ Include project files */
-  "include": [
-    "src",
-    "electron",
-    "vite.config.ts",
-    "src/types"
-  ],
+  /* App + Electron sources. vite.config.ts belongs to tsconfig.node.json —
+     including it here too makes TS demand a prebuilt .d.ts (TS6305). */
+  "include": ["src", "electron"],
 
-  /* ✅ Optional: Node build references */
   "references": [{ "path": "./tsconfig.node.json" }]
 }
