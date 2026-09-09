@@ -29,8 +29,21 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent
 
 # The user's pages, written by the Electron app — not part of this repo's assets.
-DATA_DIR = BASE_DIR.parent / "frontend" / "data"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+# Serverless hosts (Vercel, Lambda) mount a read-only filesystem with only /tmp
+# writable, so this must never hard-fail at import or the whole app 500s.
+DATA_DIR = Path(os.getenv("LYFO_DATA_DIR") or (BASE_DIR.parent / "frontend" / "data"))
+
+try:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+except OSError as error:
+    fallback = Path("/tmp/lyfo-data")
+    print(f"WARNING: {DATA_DIR} is not writable ({error}); falling back to {fallback}. "
+          "Page storage will not persist between requests on a serverless host.")
+    DATA_DIR = fallback
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
 
 # Training data and the trained model that ship with the backend.
 DATASET_DIR = BASE_DIR / "data"
@@ -125,8 +138,22 @@ def to_kproto_vector(user_dict):
     ]
 
 # ==========================================================
-# Helpers: validation + fixing
+# Endpoints
 # ==========================================================
+@app.get("/health")
+async def health():
+    """Deployment sanity check — shows what actually loaded."""
+    return {
+        "status": "ok",
+        "data_dir": str(DATA_DIR),
+        "data_dir_writable": os.access(DATA_DIR, os.W_OK),
+        "dataset_loaded": bool(len(df_users)),
+        "model_loaded": kproto is not None,
+        "llm_key_present": bool(os.getenv("GOOGLE_API_KEY")),
+        "page_types": list(schemas.PAGE_TYPES),
+    }
+
+
 @app.post("/chat/enhance")
 async def enhance_template(payload: dict):
     template = payload.get("template")
@@ -172,11 +199,6 @@ async def enhance_template(payload: dict):
         raise HTTPException(status_code=500, detail="JSON parsing failed")
 
     return {"enhanced": enhanced}
-
-
-# ==========================================================
-# Tool selector prompt (deterministic)
-# ==========================================================
 
 
 # ==========================================================
