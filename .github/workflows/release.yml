@@ -63,3 +63,15 @@ jobs:
           name: lyfo-${{ matrix.platform }}
           path: frontend/release/*/${{ matrix.artifact }}
           if-no-files-found: error
+
+      # Attach straight to the Release. GitHub's browser uploader fails on
+      # installers this size; the API upload CI uses does not.
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: frontend/release/*/${{ matrix.artifact }}
+          draft: true
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

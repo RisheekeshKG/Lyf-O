@@ -46,7 +46,13 @@ runners:
 git tag v1.0.0 && git push origin v1.0.0
 ```
 
-Installers are attached as workflow artifacts.
+Installers are attached directly to a **draft GitHub Release** (and also kept
+as workflow artifacts). Review the draft, then publish.
+
+Do not upload installers through the GitHub web UI — its browser uploader fails
+on files this size with "Something went really wrong, and we can't process that
+file." The file is fine; the uploader is not. Use the tag workflow above, or
+`gh release upload <tag> <file>` locally.
 
 ## Known gaps
 
