@@ -10,9 +10,16 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 datas = [
     ("data/clustered.csv", "data"),
     ("models/kproto_model.pkl", "models"),
+    # Trained template ranker — /recommend degrades to popularity without it.
+    ("models/recommender.joblib", "models"),
 ]
 binaries = []
 hiddenimports = [
+    "catalogue",
+    "recommender",
+    "schemas",
+    "agent",
+    "sklearn.ensemble._hist_gradient_boosting",
     "uvicorn.logging",
     "uvicorn.loops.auto",
     "uvicorn.protocols.http.auto",

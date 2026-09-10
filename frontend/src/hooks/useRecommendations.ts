@@ -23,8 +23,8 @@ export function useRecommendations(profile: UserProfile | null) {
       setCluster(data.cluster ?? null);
       setStatus(
         profile
-          ? `${recommendations.length} templates matched to your cluster`
-          : `${recommendations.length} sample templates — add a profile for tailored results`,
+          ? `${recommendations.length} picked for your profile`
+          : `${recommendations.length} general suggestions — add a profile for tailored picks`,
       );
     } catch (error: any) {
       setStatus(`Failed — ${error.message}`);

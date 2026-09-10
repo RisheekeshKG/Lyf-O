@@ -107,7 +107,16 @@ export function RecommendPage() {
               <PanelHeader
                 icon={iconForType(item.type)}
                 title={item.name}
-                action={<Badge tone="primary">{item.type}</Badge>}
+                action={
+                  <div className="flex items-center gap-space-xs">
+                    {typeof item.match === "number" && (
+                      <span className="font-mono-badge text-mono-badge text-on-surface-variant/50">
+                        {Math.round(item.match * 100)}% match
+                      </span>
+                    )}
+                    <Badge tone="primary">{item.type}</Badge>
+                  </div>
+                }
               />
 
               <div className="flex-1 px-space-lg py-space-base">
@@ -131,14 +140,11 @@ export function RecommendPage() {
 }
 
 function TemplatePreview({ item }: { item: any }) {
-  if (Array.isArray(item.items)) {
+  if (Array.isArray(item.items) && item.items.length) {
     return (
       <ul className="flex flex-col gap-space-xs">
         {item.items.slice(0, 5).map((entry: any, index: number) => (
-          <li
-            key={index}
-            className="flex items-center gap-space-sm font-body-sm text-body-sm text-on-surface-variant/70"
-          >
+          <li key={index} className="flex items-center gap-space-sm font-body-sm text-body-sm text-on-surface-variant/70">
             <Icon name="check_box_outline_blank" size={14} className="shrink-0" />
             <span className="truncate">{entry.task ?? entry.name ?? String(entry)}</span>
           </li>
@@ -147,7 +153,55 @@ function TemplatePreview({ item }: { item: any }) {
     );
   }
 
-  if (Array.isArray(item.columns)) {
+  if (Array.isArray(item.habits) && item.habits.length) {
+    return (
+      <ul className="flex flex-col gap-space-xs">
+        {item.habits.slice(0, 5).map((habit: any, index: number) => (
+          <li key={index} className="flex items-center gap-space-sm font-body-sm text-body-sm text-on-surface-variant/70">
+            <Icon name="local_fire_department" size={14} className="text-secondary shrink-0" />
+            <span className="truncate">{habit.name}</span>
+            <span className="ml-auto font-mono-badge text-mono-badge text-on-surface-variant/40">
+              {habit.goal}×/wk
+            </span>
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
+  if (Array.isArray(item.events) && item.events.length) {
+    return (
+      <ul className="flex flex-col gap-space-xs">
+        {item.events.slice(0, 4).map((event: any, index: number) => (
+          <li key={index} className="flex items-center gap-space-sm font-body-sm text-body-sm text-on-surface-variant/70">
+            <Icon name="event" size={14} className="shrink-0" />
+            <span className="truncate">{event.title}</span>
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
+  if (Array.isArray(item.entries) && item.entries.length) {
+    return (
+      <p className="font-body-sm text-body-sm text-on-surface-variant/70 line-clamp-4">
+        {item.entries[0].content || item.entries[0].title || "Journal entry"}
+      </p>
+    );
+  }
+
+  // Boards nest their cards under columns[].tasks
+  if (Array.isArray(item.columns) && item.columns.some((c: any) => Array.isArray(c.tasks))) {
+    return (
+      <div className="flex flex-wrap gap-space-xs">
+        {item.columns.map((column: any, index: number) => (
+          <Badge key={index}>{column.name}</Badge>
+        ))}
+      </div>
+    );
+  }
+
+  if (Array.isArray(item.columns) && item.columns.length) {
     return (
       <div className="flex flex-wrap gap-space-xs">
         {item.columns.slice(0, 6).map((column: any, index: number) => (
@@ -157,17 +211,13 @@ function TemplatePreview({ item }: { item: any }) {
     );
   }
 
-  if (typeof item.content === "string") {
+  if (typeof item.content === "string" && item.content.trim()) {
     return (
-      <p className="font-body-sm text-body-sm text-on-surface-variant/70 line-clamp-4">
-        {item.content}
+      <p className="font-body-sm text-body-sm text-on-surface-variant/70 line-clamp-4 whitespace-pre-line">
+        {item.content.replace(/^#+\s*/gm, "").trim()}
       </p>
     );
   }
 
-  return (
-    <p className="font-body-sm text-body-sm text-on-surface-variant/40">
-      Template ready to save.
-    </p>
-  );
+  return <p className="font-body-sm text-body-sm text-on-surface-variant/40">Ready to save.</p>;
 }

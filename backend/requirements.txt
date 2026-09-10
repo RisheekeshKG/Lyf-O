@@ -12,6 +12,9 @@ langchain-google-genai==2.0.6
 google-generativeai==0.8.5
 
 # --- Recommendation model (/recommend) ---
+# The shipped ranker is sklearn's HistGradientBoosting: it matched CatBoost on
+# this dataset (P@3 0.457 vs 0.461) without adding 88MB to every installer.
+# To re-run the benchmark: pip install catboost && python scripts/train_model.py
 # kmodes provides KPrototypes and requires scikit-learn at runtime.
 kmodes==0.12.2
 scikit-learn==1.9.0

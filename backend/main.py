@@ -13,6 +13,8 @@ from difflib import get_close_matches
 from kmodes.kprototypes import KPrototypes
 
 import agent
+import catalogue
+import recommender as recommender_module
 import schemas
 
 import os, sys, json, uvicorn, re, traceback
@@ -57,6 +59,9 @@ MODEL_DIR = BASE_DIR / "models"
 
 # Every read/write of a user page goes through this, so pages stay canonical.
 page_store = agent.PageStore(DATA_DIR)
+
+# Trained template ranker. Retrain with scripts/train_model.py.
+recommender = recommender_module.Recommender(MODEL_DIR / "recommender.joblib")
 
 # ==========================================================
 # APP
@@ -168,6 +173,8 @@ async def health():
         "data_dir_writable": os.access(DATA_DIR, os.W_OK),
         "dataset_loaded": bool(len(df_users)),
         "model_loaded": kproto is not None,
+        "recommender_ready": recommender.ready,
+        "recommender_metrics": recommender.metrics,
         "llm_key_present": bool(os.getenv("GOOGLE_API_KEY")),
         "page_types": list(schemas.PAGE_TYPES),
     }
@@ -300,38 +307,15 @@ async def chat(m: Msg):
 # ==========================================================
 @app.get("/recommend")
 async def recommend_random():
-    if kproto is None:
-        raise HTTPException(status_code=500, detail="kproto model is not loaded on server.")
-    if df_users.empty:
-        raise HTTPException(status_code=500, detail="User CSV not loaded or empty.")
-    u = df_users.sample(1).iloc[0]
-    user_vec = to_kproto_vector(u[FEATURE_COLUMNS].to_dict())
-    user_np = np.array([user_vec], dtype=object)
-    cluster = int(kproto.predict(user_np, categorical=CATEGORICAL_IDX)[0])
-    cluster_users = df_users[df_users["cluster"] == cluster]
-    templates = []
-    for row in cluster_users["template"]:
-        if row is None:
-            continue
-        if isinstance(row, str):
-            try:
-                row = json.loads(row)
-            except:
-                continue
-        if isinstance(row, dict):
-            row = [row]
-        if isinstance(row, list):
-            for item in row:
-                if isinstance(item, dict):
-                    templates.append(item)
-    seen = set()
-    unique = []
-    for t in templates:
-        nm = t.get("name","").lower().strip()
-        if nm and nm not in seen:
-            seen.add(nm)
-            unique.append(t)
-    return {"mode":"random","cluster":cluster,"user_used":u[FEATURE_COLUMNS].to_dict(),"recommendations":unique[:3]}
+    """Generic suggestions for someone who hasn't filled in a profile yet."""
+    pages = [catalogue.page_for(name) for name in recommender_module.FALLBACK_ORDER[:3]]
+    return {
+        "mode": "generic",
+        "cluster": None,
+        "recommendations": [p for p in pages if p],
+        "model": recommender.metrics.get("model", "fallback"),
+    }
+
 
 class UserProfile(BaseModel):
     age: int
@@ -341,49 +325,53 @@ class UserProfile(BaseModel):
     device_type: str
     daily_usage_hours: float
 
+
 @app.post("/recommend")
-async def recommend_user(p: UserProfile):
-    if kproto is None:
-        raise HTTPException(status_code=500, detail="kproto model is not loaded on server.")
-    user_clean = {
-        "age": float(p.age),
-        "gender": str(p.gender),
-        "occupation": str(p.occupation),
-        "education_level": str(p.education_level),
-        "device_type": str(p.device_type),
-        "daily_usage_hours": float(p.daily_usage_hours),
+async def recommend_user(p: UserProfile, limit: int = 3):
+    """
+    Rank the template catalogue for this person.
+
+    `cluster` is kept for the UI badge and backwards compatibility; the ranking
+    itself now comes from the trained model, not from cluster membership.
+    """
+    profile = p.dict()
+    recommendations = recommender.recommend(profile, limit=limit)
+
+    cluster = None
+    if kproto is not None:
+        try:
+            vector = np.array([to_kproto_vector(profile)], dtype=object)
+            cluster = int(kproto.predict(vector, categorical=CATEGORICAL_IDX)[0])
+        except Exception as error:  # the badge is cosmetic; never fail the request
+            print(f"cluster lookup failed: {error}")
+
+    return {
+        "mode": "input_user",
+        "cluster": cluster,
+        "user": profile,
+        "recommendations": recommendations,
+        "model_ready": recommender.ready,
     }
-    user_vec = to_kproto_vector(user_clean)
-    user_np = np.array([user_vec], dtype=object)
-    cluster = int(kproto.predict(user_np, categorical=CATEGORICAL_IDX)[0])
-    cluster_users = df_users[df_users["cluster"] == cluster]
-    if cluster_users.empty:
-        return {"mode":"input_user","cluster":cluster,"user":p.dict(),"recommendations":[],"reason":"No users found in this cluster"}
-    templates = []
-    for row in cluster_users["template"]:
-        if row is None:
-            continue
-        if isinstance(row, str):
-            try:
-                row = json.loads(row)
-            except:
-                continue
-        if isinstance(row, dict):
-            row = [row]
-        if isinstance(row, list):
-            for item in row:
-                if isinstance(item, dict):
-                    templates.append(item)
-    if not templates:
-        return {"mode":"input_user","cluster":cluster,"user":p.dict(),"recommendations":[],"reason":"Cluster has no templates"}
-    seen = set()
-    unique = []
-    for t in templates:
-        nm = t.get("name","").strip().lower()
-        if nm and nm not in seen:
-            seen.add(nm)
-            unique.append(t)
-    return {"mode":"input_user","cluster":cluster,"user":p.dict(),"recommendations":unique[:3]}
+
+
+@app.get("/recommend/explain")
+async def recommend_explain(
+    age: int, gender: str, occupation: str,
+    education_level: str, device_type: str, daily_usage_hours: float,
+):
+    """Full ranking with probabilities — useful for tuning and debugging."""
+    profile = {
+        "age": age, "gender": gender, "occupation": occupation,
+        "education_level": education_level, "device_type": device_type,
+        "daily_usage_hours": daily_usage_hours,
+    }
+    return {
+        "profile": profile,
+        "model_ready": recommender.ready,
+        "metrics": recommender.metrics,
+        "ranking": [{"template": n, "probability": round(s, 4)} for n, s in recommender.score(profile)],
+    }
+
 
 # ==========================================================
 # RUN

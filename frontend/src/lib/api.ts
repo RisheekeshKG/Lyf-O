@@ -4,6 +4,8 @@ import type { ChatResponse, EnhanceResponse, RecommendResponse, UserProfile } fr
  * Packaged builds spawn the backend on the first free port from 8000, so the
  * URL can't be hardcoded — ask the main process for the one it actually used.
  */
+const DEFAULT_API_URL = "http://127.0.0.1:8000";
+
 let baseUrlPromise: Promise<string> | null = null;
 
 function resolveBaseUrl(): Promise<string> {
@@ -12,9 +14,10 @@ function resolveBaseUrl(): Promise<string> {
   baseUrlPromise ??= (async () => {
     try {
       const url = await window.electronAPI?.invoke("get-api-url");
-      return url || "http://127.0.0.1:8000";
+      // Older builds answer unknown channels with an object; only trust a string.
+      return typeof url === "string" && url.startsWith("http") ? url : DEFAULT_API_URL;
     } catch {
-      return "http://127.0.0.1:8000";
+      return DEFAULT_API_URL;
     }
   })();
 
